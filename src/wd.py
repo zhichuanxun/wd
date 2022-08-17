@@ -1,12 +1,17 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import csv
+from multiprocessing.pool import ThreadPool
 import os
 from pathlib import Path
 import pickle
 from random import shuffle
 import sys
+import requests
 import getch
 import signal
+from bs4 import BeautifulSoup
+
 
 
 HOME_PATH = str(Path.home())
@@ -14,6 +19,7 @@ HOME_PATH = str(Path.home())
 
 def signal_handler(sig, frame):
     os.system('cls' if os.name == 'nt' else 'clear')
+    sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -62,8 +68,15 @@ def learn():
         def random_pick(arr, num):
             shuffle(arr)
             return arr[:num], min(len(arr), num)
-        #       5: 1x
-        #       5: x
+
+        def get_example_sentences(word, examples):
+            page = requests.get(f"https://sentencedict.com/{word}.html")
+            soup = BeautifulSoup(page.content, 'html.parser')
+            try:
+                children = soup.find(id='all').findChildren('div', recursive=False)
+                examples[word] = list(map(lambda child: child.get_text(), filter(lambda child: child.get('id')==None, children)))
+            except:
+                examples[word] = ['404 not found']
         
         grep_0x = lambda arr: list(filter(lambda w: w['status']<2, arr))
         grep_1x = lambda arr: list(filter(lambda w: 10<=w['status']<=12, arr))
@@ -73,8 +86,11 @@ def learn():
         for w in words_1x:
             w['status'] = 10
         words_0x, _ = random_pick(grep_0x(all_words), 10-take_1x)
-
-        return words_1x + words_0x
+        words = words_1x + words_0x
+        examples = {}
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            _ = [executor.submit(get_example_sentences, w['word'], examples) for w in words]
+        return words, examples
 
 
     def learn_01(w, reveal):
@@ -84,7 +100,7 @@ def learn():
         return 0
 
 
-    def learn_12(w, reveal):
+    def learn_12(w, _):
         # meaning -> word
         # sys.stdout.flush()
         print(f'{"★" if w["star"] else "-"} {w["translation"]}:', flush=True)
@@ -102,22 +118,23 @@ def learn():
         1: learn_12,
     }
 
-    todo = pick_batch()
+    todo, examples = pick_batch()
     all_done = lambda arr: all(map(lambda w: (w['status']%10)>=2, arr))
     cur, n, reveal = 0, len(todo), False
     while not all_done(todo):
-        if todo[cur]['status']%10 == 2:
+        stat = todo[cur]['status']%10
+        word_str = todo[cur]['word']
+        if stat == 2:
             cur = (cur+1)%n
             continue
-        s = todo[cur]['status']%10
-        gain = learn[0 if reveal else s](todo[cur], reveal)
+        gain = learn[0 if reveal else stat](todo[cur], reveal)
         data.words[todo[cur]['word']]['status'] += gain
         data.save_words()
 
         ch = getch.getch()
         if ch == 'y':
             reveal = True
-            data.words[todo[cur]['word']]['status'] += 1
+            data.words[word_str]['status'] += 1
             data.save_words()
         elif ch == 'n':
             reveal = True
@@ -125,8 +142,21 @@ def learn():
             reveal = False
             cur = (cur+1)%n
         elif ch == 's':
-            data.words[todo[cur]['word']]['star'] = not data.words[todo[cur]['word']]['star']
+            data.words[word_str]['star'] = not data.words[word_str]['star']
             data.save_words()
+        elif ch == 'e':
+            sentences = examples[word_str] if word_str in examples else ['not found']
+            ei, en, ml = 0, len(sentences), max([len(s) for s in sentences])
+            while True:
+                print(sentences[ei]+' '*(ml-len(sentences[ei])), end='\r')
+                ch = getch.getch()
+                if ch == 'j':
+                    ei = (ei+1)%en
+                elif ch == 'k':
+                    ei = (ei-1)%en
+                elif ch == ' ':
+                    break
+
     print('10 words done ~~~ ！！！')
 
 def import_words(file_path):
@@ -168,7 +198,6 @@ def main():
         import_words(args['import'])
     if args['export'] != None:
         export_words(args['export'])
-    
 
 if __name__ == '__main__':
     main()
