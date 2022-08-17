@@ -23,4 +23,8 @@ y: yes, familiar with this word
 n: not familiar with this word
 space: next word
 s: star word
+e: example sentences
+    j: next
+    k: prev
+    space: exit
 ```
